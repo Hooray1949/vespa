@@ -1,6 +1,7 @@
 // Copyright 2018 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.controller.maintenance;
 
+import com.yahoo.vespa.hosted.controller.api.integration.organization.ContactRetriever;
 import com.yahoo.vespa.hosted.controller.authority.config.ApiAuthorityConfig;
 import com.yahoo.config.provision.SystemName;
 import com.yahoo.log.LogLevel;
@@ -11,9 +12,7 @@ import com.yahoo.slime.Slime;
 import com.yahoo.vespa.config.SlimeUtils;
 import com.yahoo.vespa.hosted.controller.Controller;
 import com.yahoo.vespa.hosted.controller.api.identifiers.PropertyId;
-import com.yahoo.vespa.hosted.controller.api.integration.organization.Organization;
-import com.yahoo.vespa.hosted.controller.api.integration.organization.User;
-import com.yahoo.vespa.hosted.controller.tenant.Contact;
+import com.yahoo.vespa.hosted.controller.api.integration.organization.Contact;
 import com.yahoo.yolean.Exceptions;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.methods.HttpGet;
@@ -31,7 +30,6 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.logging.Logger;
-import java.util.stream.Collectors;
 
 /**
  * Periodically fetch and store contact information for tenants.
@@ -42,13 +40,13 @@ public class ContactInformationMaintainer extends Maintainer {
 
     private static final Logger log = Logger.getLogger(ContactInformationMaintainer.class.getName());
 
-    private final Organization organization;
+    private final ContactRetriever contactRetriever;
     private final List<String> baseUris;
     private CloseableHttpClient httpClient = HttpClientBuilder.create().build();
 
-    public ContactInformationMaintainer(Controller controller, Duration interval, JobControl jobControl, Organization organization, ApiAuthorityConfig apiAuthorityConfig) {
+    public ContactInformationMaintainer(Controller controller, Duration interval, JobControl jobControl, ContactRetriever contactRetriever, ApiAuthorityConfig apiAuthorityConfig) {
         super(controller, interval, jobControl, null, EnumSet.of(SystemName.cd, SystemName.main));
-        this.organization = Objects.requireNonNull(organization, "organization must be non-null");
+        this.contactRetriever = Objects.requireNonNull(contactRetriever, "organization must be non-null");
         this.baseUris = apiAuthorityConfig.authorities();
     }
 
@@ -58,11 +56,8 @@ public class ContactInformationMaintainer extends Maintainer {
         for (String baseUri : baseUris) {
             for (String tenantName : getTenantList(baseUri)) {
                 Optional<PropertyId> tenantPropertyId = getPropertyId(tenantName, baseUri);
-                if (!tenantPropertyId.isPresent())
-                    continue;
-                findContact(tenantPropertyId.get()).ifPresent(contact -> {
-                    feedContact(tenantName, contact, baseUri);
-                });
+                Contact contact = contactRetriever.getContact(tenantPropertyId);
+                feedContact(tenantName, contact, baseUri);
             }
         }
     }
@@ -94,6 +89,8 @@ public class ContactInformationMaintainer extends Maintainer {
                 sublist.addString(person);
             }
         }
+        cursor.setString("queue", contact.queue());
+        contact.component().ifPresent(component -> cursor.setString("component", component));
         return new ByteArrayEntity(SlimeUtils.toJsonBytes(slime));
     }
 
@@ -131,20 +128,6 @@ public class ContactInformationMaintainer extends Maintainer {
             log.log(LogLevel.WARNING, "Unable to get property idfor " + tenantName, e);
         }
         return propertyId;
-    }
-
-    /** Find contact information for given tenant */
-    private Optional<Contact> findContact(PropertyId propertyId) {
-        List<List<String>> persons = organization.contactsFor(propertyId)
-                                                 .stream()
-                                                 .map(personList -> personList.stream()
-                                                                              .map(User::displayName)
-                                                                              .collect(Collectors.toList()))
-                                                 .collect(Collectors.toList());
-        return Optional.of(new Contact(organization.contactsUri(propertyId),
-                                       organization.propertyUri(propertyId),
-                                       organization.issueCreationUri(propertyId),
-                                       persons));
     }
 
 }

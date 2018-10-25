@@ -9,7 +9,7 @@ import com.yahoo.vespa.hosted.controller.authority.config.ApiAuthorityConfig;
 import com.yahoo.vespa.hosted.controller.api.identifiers.PropertyId;
 import com.yahoo.vespa.hosted.controller.api.integration.organization.User;
 import com.yahoo.vespa.hosted.controller.tenant.AthenzTenant;
-import com.yahoo.vespa.hosted.controller.tenant.Contact;
+import com.yahoo.vespa.hosted.controller.api.integration.organization.Contact;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -19,6 +19,7 @@ import java.time.Duration;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
@@ -54,7 +55,7 @@ public class ContactInformationMaintainerTest {
         ApiAuthorityConfig apiAuthorityConfig = new ApiAuthorityConfig(apiAuthorityConfigBuilder);
         maintainer = new ContactInformationMaintainer(tester.controller(), Duration.ofDays(1),
                                                       new JobControl(tester.controller().curator()),
-                                                      tester.organization(), apiAuthorityConfig);
+                                                      tester.contactRetriever(), apiAuthorityConfig);
         wireMockRule.stubFor(post(urlEqualTo(contactInfoPath))
                 .willReturn(aResponse().withStatus(200)));
         wireMockRule.stubFor(get(urlEqualTo(tenantPath))
@@ -74,20 +75,13 @@ public class ContactInformationMaintainerTest {
         maintainer.run();
         verify(1, postRequestedFor(urlEqualTo(contactInfoPath)));
         LoggedRequest request = findAll(postRequestedFor(urlEqualTo(contactInfoPath))).get(0);
-        String expectedBody = "{\"url\":\"http://contact1.test\",\"issueTrackerUrl\":\"http://issue-tracker1.test\",\"propertyUrl\":\"http://property1.test\",\"persons\":[[\"alice\"],[\"bob\"]]}";
+        String expectedBody = "{\"url\":\"http://contact1.test\",\"issueTrackerUrl\":\"http://issue-tracker1.test\",\"propertyUrl\":\"http://property1.test\",\"persons\":[[\"alice\"],[\"bob\"]],\"queue\":\"queue\"}";
         assertEquals(expectedBody, new String(request.getBody()));
     }
 
     private void registerContact(long propertyId, Contact contact) {
         PropertyId p = new PropertyId(String.valueOf(propertyId));
-        tester.organization().addProperty(p)
-              .setContactsUrl(p, contact.url())
-              .setIssueUrl(p, contact.issueTrackerUrl())
-              .setPropertyUrl(p, contact.propertyUrl())
-              .setContactsFor(p, contact.persons().stream().map(persons -> persons.stream()
-                                                                                  .map(User::from)
-                                                                                  .collect(Collectors.toList()))
-                                        .collect(Collectors.toList()));
+        tester.contactRetriever().addContact(p, contact);
     }
 
     private static Contact testContact() {
@@ -96,7 +90,9 @@ public class ContactInformationMaintainerTest {
         URI propertyUrl = URI.create("http://property1.test");
         List<List<String>> persons = Arrays.asList(Collections.singletonList("alice"),
                                                    Collections.singletonList("bob"));
-        return new Contact(contactUrl, propertyUrl, issueTrackerUrl, persons);
+        String queue = "queue";
+        Optional<String> component = Optional.empty();
+        return new Contact(contactUrl, propertyUrl, issueTrackerUrl, persons, queue, component);
     }
 
 }
